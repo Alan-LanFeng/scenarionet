@@ -69,7 +69,7 @@ def get_nuplan_scenarios(data_root, map_root, logs: Union[list, None] = None, bu
         # filter
         "scenario_filter=all_scenarios",  # simulate only one log
         "scenario_filter.remove_invalid_goals=true",
-        "scenario_filter.shuffle=true",
+        "scenario_filter.shuffle=false",
         "scenario_filter.log_names=[{}]".format(log_string),
         # "scenario_filter.scenario_types={}".format(all_scenario_types),
         # "scenario_filter.scenario_tokens=[]",
@@ -474,7 +474,7 @@ def extract_traffic(scenario: NuPlanScenario, center):
     return tracks
 
 
-def convert_nuplan_scenario(scenario: NuPlanScenario, version):
+def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=False):
     """
     Data will be interpolated to 0.1s time interval, while the time interval of original key frames are 0.5s.
     """
@@ -515,6 +515,37 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version):
 
     # map
     result[SD.MAP_FEATURES] = extract_map_features(scenario.map_api, scenario_center)
+
+    if collect_sensors:
+        from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
+        camera_data = []
+        lidar_data = []
+        try:
+            for i in range(0,scenario.get_number_of_iterations(),5):
+                camera_dict = {}
+                sensors = scenario.get_sensors_at_iteration(i, [CameraChannel.CAM_B0,CameraChannel.CAM_F0,CameraChannel.CAM_L0,
+                    CameraChannel.CAM_L1,CameraChannel.CAM_L2,CameraChannel.CAM_R0,CameraChannel.CAM_R1,CameraChannel.CAM_R2, LidarChannel.MERGED_PC])
+                for camera in CameraChannel:
+                    camera_dict[camera.name]=sensors.images[camera].as_numpy
+                lidar_data.append(sensors.pointcloud[LidarChannel.MERGED_PC].points.T)
+                camera_data.append(camera_dict)
+                # import trimesh
+                # # 转换为 Trimesh 点云
+                # cloud = trimesh.points.PointCloud(lidar_data)
+                # # 创建坐标轴
+                # axis = trimesh.creation.axis(origin_size=1)  # 坐标轴的原点大小
+                # from trimesh.scene import Scene
+                # scene = Scene()
+                # scene.add_geometry(cloud)  # 添加点云
+                # scene.add_geometry(axis)  # 添加坐标轴
+                # scene.show()
+
+            result['real_camera'] = camera_data
+            result['real_lidar'] = lidar_data
+        except:
+
+            result['real_camera'] = {}
+            result['real_lidar'] = []
 
     return result
 

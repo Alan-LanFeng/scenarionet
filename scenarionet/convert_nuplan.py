@@ -21,6 +21,7 @@ if __name__ == '__main__':
     parser.add_argument("--version", "-v", default='v1.1', help="version of the raw data")
     parser.add_argument("--overwrite", action="store_true", help="If the database_path exists, whether to overwrite it")
     parser.add_argument("--num_workers", type=int, default=8, help="number of workers to use")
+    parser.add_argument("--collect_sensors",  action="store_true", help="Whether to collect camera and lidar data per 0.5s")
     parser.add_argument(
         "--raw_data_path",
         type=str,
@@ -49,5 +50,6 @@ if __name__ == '__main__':
         dataset_version=version,
         dataset_name=dataset_name,
         overwrite=overwrite,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        collect_sensors=args.collect_sensors
     )
