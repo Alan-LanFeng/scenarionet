@@ -1,5 +1,7 @@
 import time
+from concurrent.futures import ProcessPoolExecutor
 
+import argparse
 from tqdm import tqdm
 import pickle
 import numpy as np
@@ -27,6 +29,42 @@ import os
 from scenarionet.common_utils import read_dataset_summary, read_scenario
 from metadrive.component.sensors.point_cloud_lidar import PointCloudLidar
 from metadrive.component.sensors.depth_camera import DepthCamera
+from numpy import array
+
+camera_params = {'CAM_F0': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[-0.00785972, -0.02271912,  0.99971099],
+       [-0.99994262,  0.00745516, -0.00769211],
+       [-0.00727825, -0.99971409, -0.02277642]]), 'sensor2lidar_translation': array([ 1.65506747, -0.01168732,  1.49112208])}, 'CAM_L0': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[ 0.81776776, -0.0057693 ,  0.57551942],
+       [-0.57553938, -0.01377628,  0.81765802],
+       [ 0.0032112 , -0.99988846, -0.01458626]]), 'sensor2lidar_translation': array([1.63069485, 0.11956747, 1.48117884])}, 'CAM_L1': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[ 0.93120104,  0.00261563, -0.36449662],
+       [ 0.36447127, -0.02048653,  0.93098926],
+       [-0.00503215, -0.99978671, -0.0200304 ]]), 'sensor2lidar_translation': array([1.29939471, 0.63819702, 1.36736822])}, 'CAM_L2': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[ 0.63520782,  0.01497516, -0.77219607],
+       [ 0.77232489, -0.00580669,  0.63520119],
+       [ 0.00502834, -0.99987101, -0.01525415]]), 'sensor2lidar_translation': array([-0.49561003,  0.54750373,  1.3472672 ])}, 'CAM_R0': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[-0.82454901,  0.01165722,  0.56567043],
+       [-0.56528395,  0.02532491, -0.82450755],
+       [-0.02393702, -0.9996113 , -0.01429199]]), 'sensor2lidar_translation': array([ 1.61828343, -0.15532203,  1.49007665])}, 'CAM_R1': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[-0.92684778,  0.02177016, -0.37480562],
+       [ 0.37497631,  0.00421964, -0.92702479],
+       [-0.01859993, -0.9997541 , -0.01207426]]), 'sensor2lidar_translation': array([ 1.27299407, -0.60973112,  1.37217911])}, 'CAM_R2': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[-0.62253245,  0.03706878, -0.78171558],
+       [ 0.78163434, -0.02000083, -0.62341618],
+       [-0.03874424, -0.99911254, -0.01652307]]), 'sensor2lidar_translation': array([-0.48771615, -0.493167  ,  1.35027683])}, 'CAM_B0': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+       [0.000e+00, 1.545e+03, 5.600e+02],
+       [0.000e+00, 0.000e+00, 1.000e+00]]), 'sensor2lidar_rotation': array([[ 0.00802542,  0.01047463, -0.99991293],
+       [ 0.99989075, -0.01249671,  0.00789433],
+       [-0.01241293, -0.99986705, -0.01057378]]), 'sensor2lidar_translation': array([-0.47463312,  0.02368552,  1.4341838 ])}}
+
 
 class PointCloudLidar_ego_centric(DepthCamera):
     """
@@ -192,12 +230,14 @@ class CameraAndLidarObservation(BaseObservation):
         agent = self.engine.get_sensor("rgb_camera").cam.getParent()
 
         for k,v in camera_params.items():
+            if not k in camera_channel_list: continue
             camera_translation = v['sensor2lidar_translation'].copy()
             camera_translation[0], camera_translation[1], camera_translation[2] = -camera_translation[1], camera_translation[0], camera_translation[2]
             camera_rotation = v['sensor2lidar_rotation']@camera_to_world
             h,p,r = rotation_matrix_to_euler_angles(camera_rotation)
             rgb_img = self.rgb_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
             rgb_img = rgb_img[20:1100]
+            rgb_img = rgb_img[...,::-1]
             lidar = self.lidar_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
             lidar = lidar[2:110].reshape(-1,3)
             lidar = lidar[np.linalg.norm(lidar, axis=1) < 100]
@@ -209,44 +249,34 @@ class CameraAndLidarObservation(BaseObservation):
         ret['lidar'] = lidar_data
         return ret
 
-if __name__ =='__main__':
-
-    data_path = "/Users/fenglan/Dataset/traffic_dataset/processed"
-    camera_channel_list = ['CAM_F0', 'CAM_R0', 'CAM_R1', 'CAM_R2', 'CAM_B0', 'CAM_L2', 'CAM_L1', 'CAM_L0']
-    rgb_sensor_size = (1920, 1120)
-    lidar_sensor_size = (192, 112)
-
-    sample_per_n_frames = 5
-
-    with open('camera_params.pkl', 'rb') as f:
-        camera_params = pickle.load(f)
-
-    intrinsics = camera_params['CAM_F0']['intrinsics']
-    fov_x, fov_y = calculate_fov(intrinsics)
 
 
-    summary_dict, summary_list, mapping = read_dataset_summary(data_path)
-    num_files = len(summary_list)
-    print(f'processing {num_files} scenarios')
+def process_scenario(seed):
+    """ 处理单个场景文件，适用于多进程运行 """
+    print(f"Processing scenario {seed}")
+    scenario_file = summary_list[seed]
+    scenario_path = os.path.join(data_path, mapping.get(scenario_file, ""), scenario_file)
 
+    # 读取场景数据
+    with open(scenario_path, "rb") as f:
+        data = pickle.load(f)
+
+    # 创建独立的 env 实例
     env = ScenarioEnv(
         {
+            'render_pipeline': False,
             'agent_observation': CameraAndLidarObservation,
             'image_on_cuda': False,
-            # To enable onscreen rendering, set this config to True.
             "use_render": False,
-
-            # !!!!! To enable offscreen rendering, set this config to True !!!!!
             "image_observation": True,
             "norm_pixel": False,
             "stack_size": 1,
-
-            # ===== The scenario and MetaDrive config =====
             "agent_policy": ReplayEgoCarPolicy,
             "no_traffic": False,
             "sequential_seed": True,
             "reactive_traffic": False,
-            "num_scenarios": num_files,
+            "start_scenario_index": seed,
+            "num_scenarios": 1,
             "horizon": 1000,
             "no_static_vehicles": False,
             "agent_configs": {
@@ -259,24 +289,18 @@ if __name__ =='__main__':
                 lane_line_detector=dict(num_lasers=0, distance=50),
                 side_detector=dict(num_lasers=12, distance=50),
             ),
-            # "use_bounding_box": True,
             "data_directory": AssetLoader.file_path(data_path, unix_style=False),
             "height_scale": 1,
-
             "set_static": True,
-
-            # ===== Set some sensor and visualization configs =====
             "daytime": "08:10",
             "window_size": (rgb_sensor_size[0], rgb_sensor_size[1]),
-            "camera_dist": 0,  # 0.8, 1.71
-            "camera_height": 1.5,  # 1.5
+            "camera_dist": 0,
+            "camera_height": 1.5,
             "camera_pitch": None,
             "sensors": dict(
-                point_cloud=(PointCloudLidar_ego_centric, lidar_sensor_size[0],lidar_sensor_size[1], True),
+                point_cloud=(PointCloudLidar_ego_centric, lidar_sensor_size[0], lidar_sensor_size[1], True),
                 rgb_camera=(RGBCamera, rgb_sensor_size[0], rgb_sensor_size[1]),
-
             ),
-            # ===== Remove useless items in the images =====
             "show_logo": False,
             "show_fps": False,
             "show_interface": True,
@@ -285,32 +309,56 @@ if __name__ =='__main__':
         }
     )
 
-    for seed in tqdm(range(num_files)):
+    # 复位环境
+    o, info = env.reset(seed)
 
-        rgb_list = []
-        lidar_list = []
-        scenario_file = summary_list[seed]
-        scenario_path = os.path.join(data_path, mapping[scenario_file],scenario_file)
-        with open(scenario_path, "rb") as f:
-            data = pickle.load(f)
-        o, _ = env.reset(seed)
-        rgb_list.append(o['camera'])
-        lidar_list.append(o['lidar'])
+    # 存储采样数据
+    rgb_list = [o['camera']]
+    lidar_list = [o['lidar']]
+    drving_command = [info['navigation_command']]
+    # 获取场景长度
+    scenario = env.engine.data_manager.current_scenario
+    horizon = scenario['length']
+    rgb_len = horizon // sample_per_n_frames
 
-        scenario = env.engine.data_manager.current_scenario
-        continue
-        horizon = scenario['length']
-        rgb_len = horizon // sample_per_n_frames
 
-        for t in tqdm(range(1,horizon)):
-            o, r, d, _, _ = env.step([1, 0.88])
-            if t % sample_per_n_frames == 0:
-                rgb_list.append(o['camera'])
-                lidar_list.append(o['lidar'])
-        data['synthetic_camera'] = rgb_list
-        data['synthetic_lidar'] = lidar_list
+    for t in range(1, horizon):
+        o, r, tm, tc, info  = env.step([1, 0.88])
+        drving_command.append(info['navigation_command'])
+        if t % sample_per_n_frames == 0:
+            rgb_list.append(o['camera'])
+            lidar_list.append(o['lidar'])
 
-        with open(scenario_path, "wb") as f:
-            pickle.dump(data, f)
-        break
+    # 保存数据
+    data['synthetic_camera'] = rgb_list
+    data['synthetic_lidar'] = lidar_list
 
+    with open(scenario_path, "wb") as f:
+        pickle.dump(data, f)
+
+    env.close()
+    return seed  # 返回已完成的任务索引
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--data_path", type=str, default="/work/vita/datasets/Scenarionet_Dataset/mini/nuplan")
+parser.add_argument("--num_workers", type=int, default=8)
+args = parser.parse_args()
+data_path = args.data_path
+#camera_channel_list = ['CAM_F0', 'CAM_R0', 'CAM_R1', 'CAM_R2', 'CAM_B0', 'CAM_L2', 'CAM_L1', 'CAM_L0']
+camera_channel_list = ['CAM_F0', 'CAM_R0','CAM_L0']
+rgb_sensor_size = (1920, 1120)
+lidar_sensor_size = (192, 112)
+sample_per_n_frames = 5
+
+intrinsics = camera_params['CAM_F0']['intrinsics']
+fov_x, fov_y = calculate_fov(intrinsics)
+
+summary_dict, summary_list, mapping = read_dataset_summary(data_path)
+num_files = len(summary_list)
+#num_files = 1
+print(f'processing {num_files} scenarios')
+
+if __name__ =='__main__':
+
+    with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+        list(tqdm(executor.map(process_scenario, range(num_files)), total=num_files))
