@@ -16,7 +16,7 @@ from metadrive.component.sensors.depth_camera import DepthCamera
 from metadrive.component.sensors.rgb_camera import RGBCamera
 from metadrive.component.sensors.semantic_camera import SemanticCamera
 from metadrive.engine.asset_loader import AssetLoader
-from metadrive.envs.scenario_env import ScenarioEnv
+from metadrive.envs.scenario_env import ScenarioEnv, ScenarioOnlineEnv
 from metadrive.obs.image_obs import ImageObservation
 from metadrive.obs.state_obs import LidarStateObservation
 from metadrive.obs.observation_base import BaseObservation
@@ -30,6 +30,8 @@ from scenarionet.common_utils import read_dataset_summary, read_scenario
 from metadrive.component.sensors.point_cloud_lidar import PointCloudLidar
 from metadrive.component.sensors.depth_camera import DepthCamera
 from numpy import array
+from metadrive.scenario.utils import read_scenario_data, read_dataset_summary
+
 
 camera_params = {'CAM_F0': {'distortion': array([-0.356123,  0.172545, -0.00213 ,  0.000464, -0.05231 ]), 'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
        [0.000e+00, 1.545e+03, 5.600e+02],
@@ -262,7 +264,7 @@ def process_scenario(seed):
         data = pickle.load(f)
 
     # 创建独立的 env 实例
-    env = ScenarioEnv(
+    env = ScenarioOnlineEnv(
         {
             'render_pipeline': False,
             'agent_observation': CameraAndLidarObservation,
@@ -275,7 +277,7 @@ def process_scenario(seed):
             "no_traffic": False,
             "sequential_seed": True,
             "reactive_traffic": False,
-            "start_scenario_index": seed,
+            "start_scenario_index": 0,
             "num_scenarios": 1,
             "horizon": 1000,
             "no_static_vehicles": False,
@@ -308,9 +310,10 @@ def process_scenario(seed):
             "force_destroy": True,
         }
     )
-
+    sd = read_scenario_data(scenario_path, centralize=True)
+    env.set_scenario(sd)
     # 复位环境
-    o, info = env.reset(seed)
+    o, info = env.reset(0)
 
     # 存储采样数据
     rgb_list = [o['camera']]
