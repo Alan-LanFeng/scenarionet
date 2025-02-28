@@ -24,7 +24,7 @@ from metadrive.policy.replay_policy import ReplayEgoCarPolicy
 import matplotlib.pyplot as plt
 import pickle
 from scipy.spatial.transform import Rotation as R
-import open3d as o3d
+#import open3d as o3d
 import os
 from scenarionet.common_utils import read_dataset_summary, read_scenario
 from metadrive.component.sensors.point_cloud_lidar import PointCloudLidar
