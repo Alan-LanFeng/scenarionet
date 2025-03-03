@@ -13,11 +13,13 @@ from shapely.geometry.multilinestring import MultiLineString
 
 from scenarionet.converter.nuplan.type import get_traffic_obj_type, NuPlanEgoType, set_light_status
 from scenarionet.converter.utils import nuplan_to_metadrive_vector, compute_angular_velocity
-
+from nuplan.database.nuplan_db.nuplan_db_utils import get_lidarpc_sensor_data
+from nuplan.database.nuplan_db.lidar_pc import LidarPc
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 import geopandas as gpd
 from shapely.ops import unary_union
+from typing import BinaryIO, Dict, Generator, List, Optional, Set, Tuple, Union, cast
 
 try:
     from nuplan.common.actor_state.agent import Agent
@@ -32,6 +34,20 @@ try:
     from nuplan.planning.script.builders.scenario_filter_builder import build_scenario_filter
     from nuplan.planning.script.utils import set_up_common_builder
     import nuplan
+    from nuplan.database.nuplan_db.nuplan_scenario_queries import (
+        get_ego_state_for_lidarpc_token_from_db,
+        get_end_sensor_time_from_db,
+        get_images_from_lidar_tokens,
+        get_mission_goal_for_sensor_data_token_from_db,
+        get_roadblock_ids_for_lidarpc_token_from_db,
+        get_sampled_ego_states_from_db,
+        get_sampled_lidarpcs_from_db,
+        get_sensor_data_from_sensor_data_tokens_from_db,
+        get_sensor_data_token_timestamp_from_db,
+        get_sensor_transform_matrix_for_sensor_data_token_from_db,
+        get_statese2_for_lidarpc_token_from_db,
+        get_traffic_light_status_for_lidarpc_token_from_db,
+    )
 
     NUPLAN_PACKAGE_PATH = os.path.dirname(nuplan.__file__)
 except ImportError as e:
@@ -520,28 +536,36 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
         from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
         camera_data = []
         lidar_data = []
+        lidar_token = scenario.get_scenario_tokens()
+        channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
+         CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
+         LidarChannel.MERGED_PC]
         try:
             for i in range(0,scenario.get_number_of_iterations(),5):
-                camera_dict = {}
-                sensors = scenario.get_sensors_at_iteration(i, [CameraChannel.CAM_B0,CameraChannel.CAM_F0,CameraChannel.CAM_L0,
-                    CameraChannel.CAM_L1,CameraChannel.CAM_L2,CameraChannel.CAM_R0,CameraChannel.CAM_R1,CameraChannel.CAM_R2, LidarChannel.MERGED_PC])
-                for camera in CameraChannel:
-                    camera_dict[camera.name]=sensors.images[camera].as_numpy
-                lidar_data.append(sensors.pointcloud[LidarChannel.MERGED_PC].points.T)
-                camera_data.append(camera_dict)
-                # import trimesh
-                # # 转换为 Trimesh 点云
-                # cloud = trimesh.points.PointCloud(lidar_data)
-                # # 创建坐标轴
-                # axis = trimesh.creation.axis(origin_size=1)  # 坐标轴的原点大小
-                # from trimesh.scene import Scene
-                # scene = Scene()
-                # scene.add_geometry(cloud)  # 添加点云
-                # scene.add_geometry(axis)  # 添加坐标轴
-                # scene.show()
+                sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
+                token = lidar_token[i]
+
+                retrieved_images = get_images_from_lidar_tokens(
+                    scenario._log_file, [token], [cast(str, channel.value) for channel in channels]
+                )
+
+                images = {
+                    CameraChannel[image.channel].name: sensor_root+image.filename_jpg for image in
+                    retrieved_images
+                }
+
+                lidar_pc = next(
+                    get_sensor_data_from_sensor_data_tokens_from_db(
+                        scenario._log_file, get_lidarpc_sensor_data(), LidarPc, [token]
+                    )
+                )
+
+                lidar_data.append(sensor_root+lidar_pc.filename)
+                camera_data.append(images)
 
             result['real_camera'] = camera_data
             result['real_lidar'] = lidar_data
+            result['sensor_root'] = sensor_root
         except:
 
             result['real_camera'] = {}

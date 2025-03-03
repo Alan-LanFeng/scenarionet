@@ -24,7 +24,7 @@ from metadrive.policy.replay_policy import ReplayEgoCarPolicy
 import matplotlib.pyplot as plt
 import pickle
 from scipy.spatial.transform import Rotation as R
-#import open3d as o3d
+import open3d as o3d
 import os
 from scenarionet.common_utils import read_dataset_summary, read_scenario
 from metadrive.component.sensors.point_cloud_lidar import PointCloudLidar
@@ -217,6 +217,8 @@ class CameraAndLidarObservation(BaseObservation):
         return gym.spaces.Dict(os)
 
     def observe(self, vehicle):
+        if self.engine.episode_step%sample_per_n_frames!=0: return
+
         self.engine.get_sensor("rgb_camera").lens.setFov(fov_x, fov_y)
         self.engine.get_sensor("point_cloud").lens.setFov(fov_x, fov_y)
         ret = {}
@@ -240,6 +242,13 @@ class CameraAndLidarObservation(BaseObservation):
             rgb_img = self.rgb_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
             rgb_img = rgb_img[20:1100]
             rgb_img = rgb_img[...,::-1]
+            rgb_data[k] = rgb_img
+
+        for k,v in camera_params.items():
+            camera_translation = v['sensor2lidar_translation'].copy()
+            camera_translation[0], camera_translation[1], camera_translation[2] = -camera_translation[1], camera_translation[0], camera_translation[2]
+            camera_rotation = v['sensor2lidar_rotation']@camera_to_world
+            h,p,r = rotation_matrix_to_euler_angles(camera_rotation)
             lidar = self.lidar_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
             lidar = lidar[2:110].reshape(-1,3)
             lidar = lidar[np.linalg.norm(lidar, axis=1) < 100]
@@ -322,8 +331,6 @@ def process_scenario(seed):
     # 获取场景长度
     scenario = env.engine.data_manager.current_scenario
     horizon = scenario['length']
-    rgb_len = horizon // sample_per_n_frames
-
 
     for t in range(1, horizon):
         o, r, tm, tc, info  = env.step([1, 0.88])
@@ -332,9 +339,33 @@ def process_scenario(seed):
             rgb_list.append(o['camera'])
             lidar_list.append(o['lidar'])
 
-    # 保存数据
-    data['synthetic_camera'] = rgb_list
-    data['synthetic_lidar'] = lidar_list
+    rgb_len = horizon // sample_per_n_frames
+    sensor_root = data['sensor_root']
+    scenario_id = scenario['metadata']['id']
+    simulated_sensor_root = sensor_root.replace("sensor_blobs", "simulated_sensor_blobs")
+    data['simulated_sensor_root'] = simulated_sensor_root
+    if not os.path.exists(simulated_sensor_root):
+        os.makedirs(simulated_sensor_root)
+
+    rgb_path_list = []
+    lidar_path_list = []
+    for t in range(rgb_len):
+        camera_dict = rgb_list[t]
+        lidar = lidar_list[t]
+        camera_path_dict = {}
+        for k,v in camera_dict.items():
+            rgb_path = os.path.join(simulated_sensor_root, f"{scenario_id}_{k}_{t}.jpg")
+            Image.fromarray(v).save(rgb_path)
+            camera_path_dict[k] = rgb_path
+        rgb_path_list.append(camera_path_dict)
+        lidar_path = os.path.join(simulated_sensor_root, f"{scenario_id}_lidar_{t}.pcd")
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(lidar)
+        o3d.io.write_point_cloud(lidar_path, pcd)
+        lidar_path_list.append(lidar_path)
+    data['synthetic_camera'] = rgb_path_list
+    data['synthetic_lidar'] = lidar_path_list
 
     with open(scenario_path, "wb") as f:
         pickle.dump(data, f)
@@ -358,10 +389,49 @@ fov_x, fov_y = calculate_fov(intrinsics)
 
 summary_dict, summary_list, mapping = read_dataset_summary(data_path)
 num_files = len(summary_list)
-#num_files = 1
 print(f'processing {num_files} scenarios')
 
-if __name__ =='__main__':
 
-    with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
-        list(tqdm(executor.map(process_scenario, range(num_files)), total=num_files))
+if __name__ == '__main__':
+
+    from mpi4py import MPI
+    from tqdm import tqdm
+    import time
+
+    # with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    #     gpu_ids = [i for i in range(num_workers)]  # 分配 GPU
+    #     list(tqdm(executor.map(process_scenario, range(num_files), gpu_ids), total=num_files))
+
+    # 初始化 MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()  # 当前进程的 ID
+    device_id = rank
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
+    print(f"Process {rank}: CUDA_VISIBLE_DEVICES={cuda_visible_devices}")
+    size = comm.Get_size()  # 总进程数
+    # 计算每个进程需要处理的文件索引
+    files_per_rank = num_files // size
+    extra = num_files % size  # 处理不能整除的情况
+    if rank < extra:
+        start_idx = rank * (files_per_rank + 1)
+        end_idx = start_idx + files_per_rank + 1
+    else:
+        start_idx = rank * files_per_rank + extra
+        end_idx = start_idx + files_per_rank
+
+    assigned_files = list(range(start_idx, end_idx))
+
+    # 处理任务
+    results = [process_scenario(f) for f in tqdm(assigned_files, desc=f"Process {rank}")]
+
+    # 进程 0 收集所有结果
+    all_results = comm.gather(results, root=0)
+
+    # 仅在 rank 0 上显示最终结果
+    if rank == 0:
+        all_results = [item for sublist in all_results for item in sublist]  # 展平列表
+        print("\nFinal Results:")
+        for r in all_results:
+            print(r)
