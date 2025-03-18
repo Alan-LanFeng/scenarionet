@@ -366,6 +366,7 @@ def process_scenario(seed):
         lidar_path_list.append(lidar_path)
     data['synthetic_camera'] = rgb_path_list
     data['synthetic_lidar'] = lidar_path_list
+    data['driving_command'] = drving_command
 
     with open(scenario_path, "wb") as f:
         pickle.dump(data, f)
@@ -393,45 +394,46 @@ print(f'processing {num_files} scenarios')
 
 
 if __name__ == '__main__':
+    try:
+        from mpi4py import MPI
+        from tqdm import tqdm
+        import time
 
-    from mpi4py import MPI
-    from tqdm import tqdm
-    import time
 
-    # with ProcessPoolExecutor(max_workers=num_workers) as executor:
-    #     gpu_ids = [i for i in range(num_workers)]  # 分配 GPU
-    #     list(tqdm(executor.map(process_scenario, range(num_files), gpu_ids), total=num_files))
+        # 初始化 MPI
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()  # 当前进程的 ID
+        device_id = rank
+        # os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
 
-    # 初始化 MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()  # 当前进程的 ID
-    device_id = rank
-    # os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
+        print(f"Process {rank}: CUDA_VISIBLE_DEVICES={cuda_visible_devices}")
+        size = comm.Get_size()  # 总进程数
+        # 计算每个进程需要处理的文件索引
+        files_per_rank = num_files // size
+        extra = num_files % size  # 处理不能整除的情况
+        if rank < extra:
+            start_idx = rank * (files_per_rank + 1)
+            end_idx = start_idx + files_per_rank + 1
+        else:
+            start_idx = rank * files_per_rank + extra
+            end_idx = start_idx + files_per_rank
 
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "Not Set")
-    print(f"Process {rank}: CUDA_VISIBLE_DEVICES={cuda_visible_devices}")
-    size = comm.Get_size()  # 总进程数
-    # 计算每个进程需要处理的文件索引
-    files_per_rank = num_files // size
-    extra = num_files % size  # 处理不能整除的情况
-    if rank < extra:
-        start_idx = rank * (files_per_rank + 1)
-        end_idx = start_idx + files_per_rank + 1
-    else:
-        start_idx = rank * files_per_rank + extra
-        end_idx = start_idx + files_per_rank
+        assigned_files = list(range(start_idx, end_idx))
 
-    assigned_files = list(range(start_idx, end_idx))
+        # 处理任务
+        results = [process_scenario(f) for f in tqdm(assigned_files, desc=f"Process {rank}")]
 
-    # 处理任务
-    results = [process_scenario(f) for f in tqdm(assigned_files, desc=f"Process {rank}")]
+        # 进程 0 收集所有结果
+        all_results = comm.gather(results, root=0)
 
-    # 进程 0 收集所有结果
-    all_results = comm.gather(results, root=0)
-
-    # 仅在 rank 0 上显示最终结果
-    if rank == 0:
-        all_results = [item for sublist in all_results for item in sublist]  # 展平列表
-        print("\nFinal Results:")
-        for r in all_results:
-            print(r)
+        # 仅在 rank 0 上显示最终结果
+        if rank == 0:
+            all_results = [item for sublist in all_results for item in sublist]  # 展平列表
+            print("\nFinal Results:")
+            for r in all_results:
+                print(r)
+    except:
+        print("MPI not available, using ProcessPoolExecutor")
+        with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+            list(tqdm(executor.map(process_scenario, range(num_files)), total=num_files))
