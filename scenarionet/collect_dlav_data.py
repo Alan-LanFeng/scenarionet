@@ -21,6 +21,7 @@ from metadrive.obs.image_obs import ImageObservation
 from metadrive.obs.state_obs import LidarStateObservation
 from metadrive.obs.observation_base import BaseObservation
 from metadrive.policy.replay_policy import ReplayEgoCarPolicy
+from metadrive.constants import Semantics
 import matplotlib.pyplot as plt
 import pickle
 from scipy.spatial.transform import Rotation as R
@@ -67,6 +68,42 @@ camera_params = {'CAM_F0': {'distortion': array([-0.356123,  0.172545, -0.00213 
        [ 0.99989075, -0.01249671,  0.00789433],
        [-0.01241293, -0.99986705, -0.01057378]]), 'sensor2lidar_translation': array([-0.47463312,  0.02368552,  1.4341838 ])}}
 
+SEMANTIC_COLORMAP = {
+    (0, 0, 0): 0,           # UNLABELED
+    (0, 0, 142): 1,         # CAR
+    (0, 0, 70): 2,          # TRUCK
+    (220, 20, 60): 3,       # PEDESTRIAN
+    (119, 11, 32): 4,       # BIKE
+    (152, 251, 152): 5,     # TERRAIN
+    (128, 64, 128): 6,      # ROAD
+    (244, 35, 232): 7,      # SIDEWALK
+    (70, 130, 180): 8,      # SKY
+    (250, 170, 30): 9,      # TRAFFIC_LIGHT
+    (190, 153, 153): 10,    # FENCE
+    (220, 220, 0): 11,      # TRAFFIC_SIGN
+    (255, 255, 255): 12,    # LANE_LINE
+    (55, 176, 189): 13,     # CROSSWALK
+    (0, 60, 100): 14        # BUS
+}
+
+reversed_semantic_colormap = {
+    0: (0, 0, 0),           # UNLABELED
+    1: (0, 0, 142),         # CAR
+    2: (0, 0, 70),          # TRUCK
+    3: (220, 20, 60),       # PEDESTRIAN
+    4: (119, 11, 32),       # BIKE
+    5: (152, 251, 152),     # TERRAIN
+    6: (128, 64, 128),      # ROAD
+    7: (244, 35, 232),      # SIDEWALK
+    8: (70, 130, 180),      # SKY
+    9: (250, 170, 30),      # TRAFFIC_LIGHT
+    10: (190, 153, 153),    # FENCE
+    11: (220, 220, 0),      # TRAFFIC_SIGN
+    12: (255, 255, 255),    # LANE_LINE
+    13: (55, 176, 189),     # CROSSWALK
+    14: (0, 60, 100)        # BUS
+}
+
 
 def calculate_fov(intrinsic_matrix):
     f_x = intrinsic_matrix[0, 0]
@@ -86,7 +123,7 @@ class CameraAndLidarObservation(BaseObservation):
     def __init__(self, config):
         super(CameraAndLidarObservation, self).__init__(config)
         self.rgb_obs = ImageObservation(config, "rgb_camera", clip_rgb=False)
-        #self.lidar_obs = ImageObservation(config, "point_cloud", clip_rgb=True)
+        self.semantic_obs = ImageObservation(config, "semantic_camera", clip_rgb=False)
         self.depth_obs = ImageObservation(config, "depth_camera", clip_rgb=False)
 
     @property
@@ -129,6 +166,15 @@ class CameraAndLidarObservation(BaseObservation):
             depth = self.depth_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
             depth_data[k] = depth
 
+            semantic_img = self.semantic_obs.observe(agent, position=camera_translation, hpr=[h,p,r])[..., -1]
+            semantic_img = semantic_img[:,:,::-1]
+            h, w, _ = semantic_img.shape
+            label_image = np.zeros((h, w), dtype=np.uint8)
+            for color, label in SEMANTIC_COLORMAP.items():
+                mask = np.all(semantic_img == color, axis=-1)
+                label_image[mask] = label
+
+
         # visualize depth and rgb image
         # plt.figure(figsize=(10, 10))
         # plt.subplot(1, 2, 1)
@@ -142,6 +188,7 @@ class CameraAndLidarObservation(BaseObservation):
 
         ret['camera'] = rgb_data
         ret['depth'] = depth_data
+        ret['semantic_label'] = label_image
         return ret
 
 
@@ -184,7 +231,8 @@ def process_data(data):
         'depth': depth,
         'driving_command': driving_command,
         'sdc_history_feature': sdc_history_feature,
-        'sdc_future_feature': sdc_future_feature
+        'sdc_future_feature': sdc_future_feature,
+        'semantic_label': data['semantic_label'],
     }
 
     return return_data
@@ -238,6 +286,7 @@ def process_scenario(seed):
             "sensors": dict(
                 depth_camera=(DepthCamera, depth_sensor_size[0], depth_sensor_size[1]),
                 rgb_camera=(RGBCamera, rgb_sensor_size[0], rgb_sensor_size[1]),
+                semantic_camera=(SemanticCamera, rgb_sensor_size[0], rgb_sensor_size[1]),
             ),
             "show_logo": False,
             "show_fps": False,
@@ -264,6 +313,7 @@ def process_scenario(seed):
     data['synthetic_camera'] = o['camera']
     data['synthetic_depth'] = o['depth']
     data['driving_command'] = drving_command
+    data['semantic_label'] = o['semantic_label']
 
     data = process_data(data)
     with open(f'./dlav_data/{seed}.pkl', "wb") as f:
