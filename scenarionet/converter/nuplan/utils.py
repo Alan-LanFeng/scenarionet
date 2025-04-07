@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 import geopandas as gpd
 from shapely.ops import unary_union
 
+from scenarionet.converter.nuplan.utils_sensor import process_db_file_scenario, verify_10hz_synchronization
+
 try:
     from nuplan.common.actor_state.agent import Agent
     from nuplan.common.actor_state.static_object import StaticObject
@@ -477,7 +479,7 @@ def extract_traffic(scenario: NuPlanScenario, center):
     return tracks
 
 
-def convert_nuplan_scenario(scenario: NuPlanScenario, version):
+def convert_nuplan_scenario(scenario: NuPlanScenario, version, collect_sensors=False):
     """
     Data will be interpolated to 0.1s time interval, while the time interval of original key frames are 0.5s.
     """
@@ -525,6 +527,37 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version):
 
     # map
     result[SD.MAP_FEATURES] = extract_map_features(scenario.map_api, scenario_center, route_block_ids)
+
+    # Collect sensor data
+    if collect_sensors:
+        from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
+
+        # Get all scenario_tokens
+        lidar_token = scenario.get_scenario_tokens()
+        channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
+         CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
+         LidarChannel.MERGED_PC]
+
+        sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
+        db_file = os.environ.get("NUPLAN_DATA_ROOT") + "/nuplan-v1.1/splits/mini/" + scenario.log_name + ".db"
+        synchronized_log_data = process_db_file_scenario(db_file, sensor_root, lidar_token)
+        is_10Hz_synchronized = verify_10hz_synchronization(synchronized_log_data, db_file)
+        if not is_10Hz_synchronized:
+            print("WARNING", db_file, "is not 10Hz synchronized")
+
+        ########
+        # Backward compatibility
+        camera_keys = [k for k in synchronized_log_data[0].keys() if k.startswith("CAM_")]
+        result['real_camera'] = [
+            {cam: os.path.join(sensor_root, entry[cam]["file_path"]) for cam in camera_keys}
+            for entry in synchronized_log_data
+        ]
+        result["real_lidar"] = [os.path.join(sensor_root, entry["LIDAR_TOP"]["file_path"]) for entry in synchronized_log_data]
+        result["sensor_root"] = sensor_root
+        ########
+
+        # All sensor data
+        result["sensor_data"] = synchronized_log_data
 
     return result
 
