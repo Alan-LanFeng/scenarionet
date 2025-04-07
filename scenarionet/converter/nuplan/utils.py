@@ -4,7 +4,7 @@ import tempfile
 from dataclasses import dataclass
 from os.path import join
 from typing import Union
-
+from scenarionet.converter.nuplan.block_utils.route_utils import route_roadblock_correction
 import numpy as np
 from metadrive.scenario import ScenarioDescription as SD
 from metadrive.type import MetaDriveType
@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 import geopandas as gpd
 from shapely.ops import unary_union
 from typing import BinaryIO, Dict, Generator, List, Optional, Set, Tuple, Union, cast
+
+from scenarionet.converter.nuplan.utils_sensor import process_db_file_scenario, verify_10hz_synchronization
 
 try:
     from nuplan.common.actor_state.agent import Agent
@@ -94,7 +96,7 @@ def get_nuplan_scenarios(data_root, map_root, logs: Union[list, None] = None, bu
         # "scenario_filter.limit_total_scenarios=1000",
         # "scenario_filter.expand_scenarios=true",
         # "scenario_filter.limit_scenarios_per_type=10",  # use 10 scenarios per scenario type
-        "scenario_filter.timestamp_threshold_s=20",  # minial scenario duration (s)
+        "scenario_filter.timestamp_threshold_s=10",  # minial scenario duration (s)
     ]
 
     base_config_path = os.path.join(nuplan_package_path, "planning", "script")
@@ -191,7 +193,7 @@ def get_line_type(nuplan_type):
         raise ValueError("Unknown line tyep: {}".format(nuplan_type))
 
 
-def extract_map_features(map_api, center, radius=500):
+def extract_map_features(map_api, center, route_block_ids, radius=500):
     ret = {}
     np.seterr(all='ignore')
     # Center is Important !
@@ -251,7 +253,9 @@ def extract_map_features(map_api, center, radius=500):
                         if layer == SemanticMapLayer.ROADBLOCK else [],
                     SD.RIGHT_NEIGHBORS: [edge.id for edge in block.interior_edges[index + 1:]] \
                         if layer == SemanticMapLayer.ROADBLOCK else [],
-                    SD.POLYGON: polygon
+                    SD.POLYGON: polygon,
+                    "is_sdc_route": lane_meta_data.get_roadblock_id() in route_block_ids,
+                    "speed_limit_mps": lane_meta_data.speed_limit_mps,
                 }
                 if layer == SemanticMapLayer.ROADBLOCK_CONNECTOR:
                     continue
@@ -490,7 +494,7 @@ def extract_traffic(scenario: NuPlanScenario, center):
     return tracks
 
 
-def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=False):
+def convert_nuplan_scenario(scenario: NuPlanScenario, version, collect_sensors=False):
     """
     Data will be interpolated to 0.1s time interval, while the time interval of original key frames are 0.5s.
     """
@@ -529,8 +533,46 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
     # traffic light
     result[SD.DYNAMIC_MAP_STATES] = extract_traffic_light(scenario, scenario_center)
 
+    # route
+    route_block_ids = scenario.get_route_roadblock_ids()
+    try:
+        route_block_ids = route_roadblock_correction(state, scenario.map_api, route_block_ids)
+    except Exception as e:
+        logger.error("Route correction failed: {}".format(e))
+
     # map
-    result[SD.MAP_FEATURES] = extract_map_features(scenario.map_api, scenario_center)
+    result[SD.MAP_FEATURES] = extract_map_features(scenario.map_api, scenario_center, route_block_ids)
+
+    # Collect sensor data
+    if collect_sensors:
+        from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
+
+        # Get all scenario_tokens
+        lidar_token = scenario.get_scenario_tokens()
+        channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
+         CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
+         LidarChannel.MERGED_PC]
+
+        sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
+        db_file = os.environ.get("NUPLAN_DATA_ROOT") + "/nuplan-v1.1/splits/mini/" + scenario.log_name + ".db"
+        synchronized_log_data = process_db_file_scenario(db_file, sensor_root, lidar_token)
+        is_10Hz_synchronized = verify_10hz_synchronization(synchronized_log_data, db_file)
+        if not is_10Hz_synchronized:
+            print("WARNING", db_file, "is not 10Hz synchronized")
+
+        ########
+        # Backward compatibility
+        camera_keys = [k for k in synchronized_log_data[0].keys() if k.startswith("CAM_")]
+        result['real_camera'] = [
+            {cam: os.path.join(sensor_root, entry[cam]["file_path"]) for cam in camera_keys}
+            for entry in synchronized_log_data
+        ]
+        result["real_lidar"] = [os.path.join(sensor_root, entry["LIDAR_TOP"]["file_path"]) for entry in synchronized_log_data]
+        result["sensor_root"] = sensor_root
+        ########
+
+        # All sensor data
+        result["sensor_data"] = synchronized_log_data
 
     if collect_sensors:
         from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel

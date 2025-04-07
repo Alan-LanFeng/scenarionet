@@ -142,6 +142,7 @@ def write_to_directory(
     )
 
     # Run, workers and process result from worker
+    #ret = [func(arg) for arg in argument_list]
     with multiprocessing.Pool(num_workers, maxtasksperchild=10) as p:
         ret = list(p.imap(func, argument_list))
         # call ret to block the process
