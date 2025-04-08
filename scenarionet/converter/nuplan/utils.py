@@ -557,8 +557,7 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version, collect_sensors=F
         db_file = os.environ.get("NUPLAN_DATA_ROOT") + "/nuplan-v1.1/splits/mini/" + scenario.log_name + ".db"
         synchronized_log_data = process_db_file_scenario(db_file, sensor_root, lidar_token)
         is_10Hz_synchronized = verify_10hz_synchronization(synchronized_log_data, db_file)
-        if not is_10Hz_synchronized:
-            print("WARNING", db_file, "is not 10Hz synchronized")
+        result["is_10Hz_synchronized"] = is_10Hz_synchronized
 
         ########
         # Backward compatibility
@@ -573,45 +572,6 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version, collect_sensors=F
 
         # All sensor data
         result["sensor_data"] = synchronized_log_data
-
-    if collect_sensors:
-        from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
-        camera_data = []
-        lidar_data = []
-        lidar_token = scenario.get_scenario_tokens()
-        channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
-         CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
-         LidarChannel.MERGED_PC]
-        try:
-            for i in range(0,scenario.get_number_of_iterations(),5):
-                sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
-                token = lidar_token[i]
-
-                retrieved_images = get_images_from_lidar_tokens(
-                    scenario._log_file, [token], [cast(str, channel.value) for channel in channels]
-                )
-
-                images = {
-                    CameraChannel[image.channel].name: sensor_root+image.filename_jpg for image in
-                    retrieved_images
-                }
-
-                lidar_pc = next(
-                    get_sensor_data_from_sensor_data_tokens_from_db(
-                        scenario._log_file, get_lidarpc_sensor_data(), LidarPc, [token]
-                    )
-                )
-
-                lidar_data.append(sensor_root+lidar_pc.filename)
-                camera_data.append(images)
-
-            result['real_camera'] = camera_data
-            result['real_lidar'] = lidar_data
-            result['sensor_root'] = sensor_root
-        except:
-
-            result['real_camera'] = {}
-            result['real_lidar'] = []
 
     return result
 
