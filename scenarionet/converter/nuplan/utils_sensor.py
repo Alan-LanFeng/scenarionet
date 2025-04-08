@@ -56,6 +56,17 @@ from collections import defaultdict
 
 import numpy as np
 
+CAMERAS_LIST = [
+    'CAM_L0',
+    'CAM_F0',
+    'CAM_R0',
+    'CAM_R1',
+    'CAM_R2',
+    'CAM_B0',
+    'CAM_L2',
+    'CAM_L1'
+]
+
 
 @contextmanager
 def get_db_cursor(db_file: str):
@@ -147,24 +158,14 @@ def fetch_ego_poses_scenario(cursor: sqlite3.Cursor, lidar_tokens: List[str]) ->
 
     return ego_poses
 
-
-def fetch_camera_data_scenario(cursor: sqlite3.Cursor, lidar_tokens: List[str]) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Fetches camera data for the given lidar timestamps.
-
-    Args:
-        cursor: SQLite cursor.
-        lidar_tokens: List of lidar tokens for the scenario.
-
-    Returns:
-        Dictionary of camera data per channel.
-    """
+def fetch_camera_data_best_match(cursor: sqlite3.Cursor, lidar_tokens: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     if not lidar_tokens:
         return {}
 
     query = f"""
-    SELECT c.channel, i.token, i.filename_jpg, i.timestamp, i.ego_pose_token,
-           c.translation, c.rotation, c.intrinsic, c.distortion
+    SELECT lp.token, lp.timestamp AS lidar_ts,
+           c.channel, i.token, i.filename_jpg, i.timestamp AS cam_ts,
+           i.ego_pose_token, c.translation, c.rotation, c.intrinsic, c.distortion
     FROM camera c
     JOIN image i ON c.token = i.camera_token
     JOIN lidar_pc lp ON i.timestamp BETWEEN lp.timestamp - 50000 AND lp.timestamp + 50000
@@ -175,26 +176,73 @@ def fetch_camera_data_scenario(cursor: sqlite3.Cursor, lidar_tokens: List[str]) 
     cursor.execute(query, [bytearray.fromhex(t) for t in lidar_tokens])
     rows = cursor.fetchall()
 
-    cameras_data = defaultdict(list)
+    # For (lidar_token, channel), store the best camera match (min time diff)
+    best_matches = {}
+
     for row in rows:
-        channel, token, filename, timestamp, ego_pose_token, translation, rotation, intrinsic, distortion = row
-        translation = pickle.loads(translation)
-        rotation = pickle.loads(rotation)
-        intrinsic = pickle.loads(intrinsic)
-        distortion = pickle.loads(distortion)
+        lidar_token, lidar_ts, channel, cam_token, filename, cam_ts, ego_pose_token, translation, rotation, intrinsic, distortion = row
 
-        cameras_data[channel].append({
-            'token': token.hex(),
-            'file_path': filename,
-            'timestamp': timestamp,
-            'ego_pose_token': ego_pose_token.hex(),
-            'intrinsic': list(intrinsic),
-            'distortion': list(distortion),
-            'sensor_to_ego_rot': list(rotation),
-            'sensor_to_ego_tran': list(translation),
-        })
+        time_diff = abs(cam_ts - lidar_ts)
+        key = (lidar_token, channel)
 
-    return cameras_data
+        if key not in best_matches or time_diff < best_matches[key][0]:
+            best_matches[key] = (time_diff, {
+                'token': cam_token.hex(),
+                'file_path': filename,
+                'timestamp': cam_ts,
+                'ego_pose_token': ego_pose_token.hex(),
+                'intrinsic': list(pickle.loads(intrinsic)),
+                'distortion': list(pickle.loads(distortion)),
+                'sensor_to_ego_rot': list(pickle.loads(rotation)),
+                'sensor_to_ego_tran': list(pickle.loads(translation)),
+                # Store the original lidar timestamp for easier comparison later.
+                'lidar_ts': lidar_ts,
+            })
+
+    # Organize the best matches by camera channel, but keep them keyed by lidar_token (hex)
+    cameras_by_channel = defaultdict(dict)
+    for (lidar_token, channel), (_, data) in best_matches.items():
+        cameras_by_channel[channel][lidar_token.hex()] = data
+
+    return cameras_by_channel
+
+
+def align_camera_data(lidar_data: List[Dict[str, Any]],
+                      cameras_by_channel: Dict[str, Dict[str, Any]],
+                      channels: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Build a list of camera data per channel aligned to the lidar_data order.
+    For missing frames, use the closest available camera frame.
+    """
+    aligned_cameras = {channel: [] for channel in channels}
+
+    # Precompute for each channel a list of available camera data values (if any)
+    # so that we can search for the closest match when needed.
+    available = {}
+    for channel in channels:
+        # available will be a list of (lidar_ts, camera_data) sorted by lidar_ts.
+        camera_entries = list(cameras_by_channel.get(channel, {}).values())
+        available[channel] = sorted([(entry['lidar_ts'], entry) for entry in camera_entries], key=lambda x: x[0])
+
+    for lidar in lidar_data:
+        token_hex = lidar['token']
+        lidar_ts = lidar['timestamp']
+        for channel in channels:
+            if token_hex in cameras_by_channel.get(channel, {}):
+                # Exact match found, use it.
+                aligned_cameras[channel].append(cameras_by_channel[channel][token_hex])
+            else:
+                # No direct match for this lidar token. Copy-paste the closest available camera data.
+                # Only do this if we have any available data for this channel.
+                if available[channel]:
+                    # Find the camera entry with a minimal time difference.
+                    closest = min(available[channel], key=lambda item: abs(item[0] - lidar_ts))[1]
+                    aligned_cameras[channel].append(closest)
+                else:
+                    # Optionally, handle the case when there is no camera data at all.
+                    aligned_cameras[channel].append(None)
+
+    return aligned_cameras
 
 
 def find_nearest_lidar_frame(lidar_data: List[Dict[str, Any]], target_timestamp: int, start_index: int) -> Tuple[Dict[str, Any], int]:
@@ -295,10 +343,27 @@ def process_db_file_scenario(db_file: str, sensor_root: str, lidar_tokens: List[
     """
     with get_db_cursor(db_file) as cursor:
         lidar_data = fetch_lidar_data_scenario(cursor, lidar_tokens)
-        camera_data = fetch_camera_data_scenario(cursor, lidar_tokens)
+
+        # Fetch camera data organized by channel keyed by lidar token.
+        cameras_by_channel = fetch_camera_data_best_match(cursor, lidar_tokens)
+        # Align camera data with the lidar data order and fill missing entries.
+        camera_data = align_camera_data(lidar_data, cameras_by_channel, CAMERAS_LIST)
+
         ego_poses = fetch_ego_poses_scenario(cursor, lidar_tokens)
 
-    # Change from {cam_name: [temporal list of cam_info]} to [temporal list of {cam_name, cam_info_i}]
+    lengths = {cam_name: len(camera_data[cam_name]) for cam_name in CAMERAS_LIST}
+    all_equal = len(set(lengths.values())) == 1
+
+    try:
+        assert len(lidar_data) == len(lidar_tokens)
+        assert len(ego_poses) == len(lidar_tokens)
+        assert all_equal
+        assert lengths["CAM_F0"] == len(lidar_tokens)
+    except:
+        print(os.path.basename(db_file))
+        import ipdb
+        ipdb.set_trace()
+
     synchronized_frames = [{cam_name: cam[i] for cam_name, cam in camera_data.items()} for i in range(len(camera_data["CAM_F0"]))]
 
     synchronized_log_data = []
@@ -359,17 +424,6 @@ def process_db_file_scenario(db_file: str, sensor_root: str, lidar_tokens: List[
     return synchronized_log_data
 
 
-CAMERAS_LIST = [
-    'CAM_L0',
-    'CAM_F0',
-    'CAM_R0',
-    'CAM_R1',
-    'CAM_R2',
-    'CAM_B0',
-    'CAM_L2',
-    'CAM_L1'
-]
-
 def verify_10hz_synchronization(synchronized_log_data: List[Dict[str, Any]], db_file: str) -> None:
     """
     This function checks the timestamps of each camera's data to ensure
@@ -401,14 +455,14 @@ def verify_10hz_synchronization(synchronized_log_data: List[Dict[str, Any]], db_
         if max_diff > 50000:  # Check if sensor data is correctly extracted at 10Hz with a 0.05s margin of error
             error_index = np.argmax(abs(time_differences - 100000))
             error_timestamp = sensor_timestamps[error_index]
-            print(
-                f"Sensor synchronization error in database file {db_file}:\n"
-                f"  Sensor: {sensor}\n"
-                f"  Error occurred at timestamp: {error_timestamp}\n"
-                f"  Timestamp index: {error_index}\n"
-                f"  Measured time difference: {max_diff} microseconds\n"
-                f"  Number of camera frames in db files: {len(synchronized_log_data)}"
-            )
+            #print(
+            #    f"Sensor synchronization error in database file {db_file}:\n"
+            #    f"  Sensor: {sensor}\n"
+            #    f"  Error occurred at timestamp: {error_timestamp}\n"
+            #    f"  Timestamp index: {error_index}\n"
+            #    f"  Measured time difference: {max_diff} microseconds\n"
+            #    f"  Number of camera frames in db files: {len(synchronized_log_data)}"
+            #)
             return False
 
     return True
