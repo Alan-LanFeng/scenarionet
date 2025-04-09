@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 import geopandas as gpd
 from shapely.ops import unary_union
 from typing import BinaryIO, Dict, Generator, List, Optional, Set, Tuple, Union, cast
-
+import shutil
 try:
     from nuplan.common.actor_state.agent import Agent
     from nuplan.common.actor_state.static_object import StaticObject
@@ -535,41 +535,40 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
     if collect_sensors:
         from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario import NuPlanScenario, CameraChannel, LidarChannel
         camera_data = []
-        lidar_data = []
         lidar_token = scenario.get_scenario_tokens()
         channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
          CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
          LidarChannel.MERGED_PC]
-        try:
-            for i in range(0,scenario.get_number_of_iterations(),5):
-                sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
-                token = lidar_token[i]
+        sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
+        result['sensor_root'] = sensor_root
 
-                retrieved_images = get_images_from_lidar_tokens(
-                    scenario._log_file, [token], [cast(str, channel.value) for channel in channels]
-                )
+        old_prefix = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs/'
+        new_prefix = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs_/'
+        mv_image = True
+        for i in range(0,scenario.get_number_of_iterations(),5):
+            token = lidar_token[i]
+            retrieved_images = get_images_from_lidar_tokens(
+                scenario._log_file, [token], [cast(str, channel.value) for channel in channels]
+            )
 
-                images = {
-                    CameraChannel[image.channel].name: sensor_root+image.filename_jpg for image in
-                    retrieved_images
-                }
+            images = {
+                CameraChannel[image.channel].name: sensor_root+image.filename_jpg for image in
+                retrieved_images
+            }
 
-                lidar_pc = next(
-                    get_sensor_data_from_sensor_data_tokens_from_db(
-                        scenario._log_file, get_lidarpc_sensor_data(), LidarPc, [token]
-                    )
-                )
+            new_images = {}
+            for k, v in images.items():
+                if mv_image:
+                    relative_path = os.path.relpath(v, old_prefix)
+                    new_path = os.path.join(new_prefix, relative_path)
+                    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                    if os.path.exists(v):
+                        shutil.copy(v, new_path)
+                    v = new_path
+                new_images[k] = v
+            camera_data.append(new_images)
 
-                lidar_data.append(sensor_root+lidar_pc.filename)
-                camera_data.append(images)
-
-            result['real_camera'] = camera_data
-            result['real_lidar'] = lidar_data
-            result['sensor_root'] = sensor_root
-        except:
-
-            result['real_camera'] = {}
-            result['real_lidar'] = []
+        result['real_camera'] = camera_data
 
     return result
 
