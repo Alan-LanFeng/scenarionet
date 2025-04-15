@@ -312,7 +312,6 @@ def process_scenario(seed):
 
     # 存储采样数据
     rgb_list = [o['camera']]
-    drving_command = [info['navigation_command']]
     # 获取场景长度
     scenario = env.engine.data_manager.current_scenario
     horizon = scenario['length']
@@ -343,7 +342,6 @@ def process_scenario(seed):
             camera_path_dict[k] = rgb_path
         rgb_path_list.append(camera_path_dict)
     data['synthetic_camera'] = rgb_path_list
-    data['driving_command'] = drving_command
 
     with open(scenario_path, "wb") as f:
         pickle.dump(data, f)
@@ -355,11 +353,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--data_path", type=str, default="/work/vita/datasets/Scenarionet_Dataset/validation/nuplan")
 parser.add_argument("--num_workers", type=int, default=8)
 parser.add_argument("--start_index", type=int, default=0)
-parser.add_argument("--end_index", type=int, default=1000)
+parser.add_argument("--end_index", type=int, default=10000000)
 
 args = parser.parse_args()
 data_path = args.data_path
-camera_channel_list = ['CAM_F0', 'CAM_R0', 'CAM_R1', 'CAM_R2', 'CAM_B0', 'CAM_L2', 'CAM_L1', 'CAM_L0']
+camera_channel_list = ['CAM_F0', 'CAM_R0', 'CAM_L0']
 rgb_sensor_size = (1920, 1120)
 
 sample_per_n_frames = 5
@@ -373,7 +371,8 @@ summary_dict, summary_list, mapping = read_dataset_summary(data_path)
 
 num_files = len(summary_list)
 print(f'processing {num_files} scenarios')
-manual_file_indices = list(range(args.start_index, args.end_index))
+end_index = min(args.end_index, num_files)
+manual_file_indices = list(range(args.start_index, end_index))
 
 if __name__ == '__main__':
     #process_scenario(0)
@@ -383,10 +382,7 @@ if __name__ == '__main__':
     import os
     from tqdm import tqdm
 
-# 可选：用户手动指定想处理的文件索引（例如 range(100) 表示处理前100个文件）
-    manual_file_indices = None  # 设置为 None 表示不指定；否则如：list(range(100))
 
-    # 文件路径，每个进程单独一个日志文件
     def get_log_path(rank):
         return f"{args.start_index}_processed_indices_rank{rank}.txt"
 

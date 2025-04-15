@@ -13,6 +13,8 @@ from shapely.geometry.multilinestring import MultiLineString
 
 from scenarionet.converter.nuplan.type import get_traffic_obj_type, NuPlanEgoType, set_light_status
 from scenarionet.converter.utils import nuplan_to_metadrive_vector, compute_angular_velocity
+from scenarionet.converter.nuplan.driving_command import get_driving_command
+
 from nuplan.database.nuplan_db.nuplan_db_utils import get_lidarpc_sensor_data
 from nuplan.database.nuplan_db.lidar_pc import LidarPc
 logging.basicConfig(level=logging.INFO)
@@ -539,13 +541,18 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
         channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
          CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
          LidarChannel.MERGED_PC]
-        sensor_root = os.environ.get("NUPLAN_DATA_ROOT") + '/nuplan-v1.1/sensor_blobs/'
+        sensor_root = '/work/vita/datasets/nuplan_v1.1_mini/sensor_blobs/'
         result['sensor_root'] = sensor_root
-
-        old_prefix = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs/'
-        new_prefix = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs_/'
+        old_prefix = sensor_root
+        new_prefix = '/work/vita/datasets/nuplan_root/dataset/nuplan-v1.1/sensor_blobs_sampled/'
         mv_image = True
+
+        roadblock_ids = scenario.get_route_roadblock_ids()
+        driving_commands = []
         for i in range(0,scenario.get_number_of_iterations(),5):
+            ego_pose = scenario.get_ego_state_at_iteration(i).rear_axle
+            driving_command = get_driving_command(ego_pose, scenario.map_api, roadblock_ids)
+            driving_commands.append(driving_command)
             token = lidar_token[i]
             retrieved_images = get_images_from_lidar_tokens(
                 scenario._log_file, [token], [cast(str, channel.value) for channel in channels]
@@ -569,6 +576,7 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
             camera_data.append(new_images)
 
         result['real_camera'] = camera_data
+        result['driving_command'] = driving_commands
 
     return result
 
