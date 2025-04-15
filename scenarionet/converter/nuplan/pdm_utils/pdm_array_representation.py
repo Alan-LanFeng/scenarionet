@@ -8,13 +8,13 @@ from nuplan.common.actor_state.ego_state import EgoState
 from nuplan.common.actor_state.state_representation import StateSE2, StateVector2D, TimePoint
 from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
 
-from navsim.planning.simulation.planner.pdm_planner.utils.pdm_enums import (
+from scenarionet.converter.nuplan.pdm_utils.pdm_enums import (
     BBCoordsIndex,
     PointIndex,
     SE2Index,
     StateIndex,
 )
-from navsim.planning.simulation.planner.pdm_planner.utils.pdm_geometry_utils import (
+from scenarionet.converter.nuplan.pdm_utils.pdm_geometry_utils import (
     get_acceleration_shifted,
     get_velocity_shifted,
     se2_array_translate_longitudinally,
