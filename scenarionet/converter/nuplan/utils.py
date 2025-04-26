@@ -14,7 +14,7 @@ from shapely.geometry.multilinestring import MultiLineString
 from scenarionet.converter.nuplan.type import get_traffic_obj_type, NuPlanEgoType, set_light_status
 from scenarionet.converter.utils import nuplan_to_metadrive_vector, compute_angular_velocity
 from scenarionet.converter.nuplan.driving_command import get_driving_command
-
+import math
 from nuplan.database.nuplan_db.nuplan_db_utils import get_lidarpc_sensor_data
 from nuplan.database.nuplan_db.lidar_pc import LidarPc
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +23,7 @@ import geopandas as gpd
 from shapely.ops import unary_union
 from typing import BinaryIO, Dict, Generator, List, Optional, Set, Tuple, Union, cast
 import shutil
+from numpy import array
 try:
     from nuplan.common.actor_state.agent import Agent
     from nuplan.common.actor_state.static_object import StaticObject
@@ -56,6 +57,143 @@ except ImportError as e:
     raise RuntimeError(e)
 
 EGO = "ego"
+
+camera_params = {'CAM_F0': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[-0.00785972, -0.02271912, 0.99971099],
+                                                            [-0.99994262, 0.00745516, -0.00769211],
+                                                            [-0.00727825, -0.99971409, -0.02277642]]),
+                            'sensor2lidar_translation': array([1.65506747, -0.01168732, 1.49112208])},
+                 'CAM_L0': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[0.81776776, -0.0057693, 0.57551942],
+                                                            [-0.57553938, -0.01377628, 0.81765802],
+                                                            [0.0032112, -0.99988846, -0.01458626]]),
+                            'sensor2lidar_translation': array([1.63069485, 0.11956747, 1.48117884])},
+                 'CAM_L1': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[0.93120104, 0.00261563, -0.36449662],
+                                                            [0.36447127, -0.02048653, 0.93098926],
+                                                            [-0.00503215, -0.99978671, -0.0200304]]),
+                            'sensor2lidar_translation': array([1.29939471, 0.63819702, 1.36736822])},
+                 'CAM_L2': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[0.63520782, 0.01497516, -0.77219607],
+                                                            [0.77232489, -0.00580669, 0.63520119],
+                                                            [0.00502834, -0.99987101, -0.01525415]]),
+                            'sensor2lidar_translation': array([-0.49561003, 0.54750373, 1.3472672])},
+                 'CAM_R0': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[-0.82454901, 0.01165722, 0.56567043],
+                                                            [-0.56528395, 0.02532491, -0.82450755],
+                                                            [-0.02393702, -0.9996113, -0.01429199]]),
+                            'sensor2lidar_translation': array([1.61828343, -0.15532203, 1.49007665])},
+                 'CAM_R1': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[-0.92684778, 0.02177016, -0.37480562],
+                                                            [0.37497631, 0.00421964, -0.92702479],
+                                                            [-0.01859993, -0.9997541, -0.01207426]]),
+                            'sensor2lidar_translation': array([1.27299407, -0.60973112, 1.37217911])},
+                 'CAM_R2': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[-0.62253245, 0.03706878, -0.78171558],
+                                                            [0.78163434, -0.02000083, -0.62341618],
+                                                            [-0.03874424, -0.99911254, -0.01652307]]),
+                            'sensor2lidar_translation': array([-0.48771615, -0.493167, 1.35027683])},
+                 'CAM_B0': {'distortion': array([-0.356123, 0.172545, -0.00213, 0.000464, -0.05231]),
+                            'intrinsics': array([[1.545e+03, 0.000e+00, 9.600e+02],
+                                                 [0.000e+00, 1.545e+03, 5.600e+02],
+                                                 [0.000e+00, 0.000e+00, 1.000e+00]]),
+                            'sensor2lidar_rotation': array([[0.00802542, 0.01047463, -0.99991293],
+                                                            [0.99989075, -0.01249671, 0.00789433],
+                                                            [-0.01241293, -0.99986705, -0.01057378]]),
+                            'sensor2lidar_translation': array([-0.47463312, 0.02368552, 1.4341838])}}
+
+COLOR_TABLE = {
+    'lanelines': np.array([98, 183, 249], np.uint8),  # 浅蓝
+    'lanes': np.array([56, 103, 221], np.uint8),  # 深蓝
+    'road_boundaries': np.array([200, 36, 35], np.uint8),  # 深红
+    'crosswalks': np.array([206, 131, 63], np.uint8),  # 土黄
+    'traffic_light_red': np.array([255, 0, 0], np.uint8),  # 红
+    'traffic_light_yellow': np.array([255, 255, 0], np.uint8),  # 黄
+    'traffic_light_green': np.array([0, 255, 0], np.uint8),  # 绿
+    'traffic_light_unknown': np.array([255, 255, 255], np.uint8),  # 白
+    'pedestrian': np.array( [255, 0, 255], np.uint8),  # 青
+    'vehicle': np.array([0, 128, 255], np.uint8),  # 蓝
+    'bicycle': np.array([255, 255, 0], np.uint8),  # 黑
+}
+
+def interpolate_polyline(pts: np.ndarray, interval: float) -> np.ndarray:
+    """按 interval(m) 均匀插值 polyline"""
+    if interval <= 0 or len(pts) < 2:
+        return pts
+    seg_len = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+    n_insert = np.maximum(np.floor_divide(seg_len, interval).astype(int), 1)
+    new_pts = [pts[0]]
+    for i in range(len(pts) - 1):
+        ratio = np.linspace(1 / n_insert[i], 1, n_insert[i])
+        interp = pts[i] + ratio[:, None] * (pts[i + 1] - pts[i])
+        new_pts.extend(list(interp))
+    return np.vstack(new_pts)
+
+# ---------- 一些基础工具 ---------- #
+def yaw_to_rot(yaw: float) -> np.ndarray:
+    """绕 Z 轴的右手坐标系旋转矩阵（车辆 heading → 世界）"""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array([[c, -s, 0],
+                     [s, c, 0],
+                     [0, 0, 1]], dtype=np.float32)
+
+
+def build_se3(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """4×4 SE(3) 齐次矩阵"""
+    T = np.eye(4, dtype=np.float32)
+    T[:3, :3], T[:3, 3] = R, t
+    return T
+
+
+def world_to_camera_T(lidar_pos, lidar_yaw,
+                      cam2lidar_t, cam2lidar_R) -> np.ndarray:
+    """
+    构造世界到相机的齐次变换
+    world ─► lidar ─► camera
+    """
+    T_w_lidar = build_se3(yaw_to_rot(lidar_yaw), lidar_pos)  # world→lidar
+    T_cam_lidar = build_se3(cam2lidar_R, cam2lidar_t)  # cam→lidar (给定)
+    T_w_cam = T_w_lidar @ T_cam_lidar  # world→cam
+    return np.linalg.inv(T_w_cam)  # 取逆得 cam←world
+
+
+def project_points_cam(points_cam: np.ndarray,
+                       K: np.ndarray, img_hw) -> tuple[np.ndarray, np.ndarray]:
+    """
+    相机坐标系点集 → 像素坐标 & 可见 mask
+    points_cam: (N,3)
+    """
+    x, y, z = points_cam.T
+    eps_mask = z > 1e-3
+    u = K[0, 0] * x / z + K[0, 2]
+    v = K[1, 1] * y / z + K[1, 2]
+    H, W = img_hw
+    uv = np.stack([u, v], axis=1)
+    in_img = (u >= 0) & (u < W) & (v >= 0) & (v < H)
+    valid = eps_mask & in_img
+    return uv.astype(np.int32), valid
+
 
 
 def get_nuplan_scenarios(data_root, map_root, logs: Union[list, None] = None, builder="nuplan_mini"):
@@ -541,10 +679,10 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
         channels = [CameraChannel.CAM_B0, CameraChannel.CAM_F0, CameraChannel.CAM_L0,
          CameraChannel.CAM_L1, CameraChannel.CAM_L2, CameraChannel.CAM_R0, CameraChannel.CAM_R1, CameraChannel.CAM_R2,
          LidarChannel.MERGED_PC]
-        sensor_root = '/work/vita/datasets/nuplan_v1.1_mini/sensor_blobs/'
+        sensor_root = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs'
         result['sensor_root'] = sensor_root
         old_prefix = sensor_root
-        new_prefix = '/work/vita/datasets/nuplan_root/dataset/nuplan-v1.1/sensor_blobs_sampled/'
+        new_prefix = '/Users/fenglan/Dataset/traffic_dataset/nuplan/dataset/nuplan-v1.1/sensor_blobs_sampled/'
         mv_image = True
 
         roadblock_ids = scenario.get_route_roadblock_ids()
