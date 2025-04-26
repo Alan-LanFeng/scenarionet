@@ -450,7 +450,7 @@ def process_scenario(seed):
 
     sensor_root = data['sensor_root']
     scenario_id = scenario['metadata']['id']
-    rendered_sensor_root = sensor_root.replace("sensor_blobs", "rendered_sensor_root")
+    rendered_sensor_root = sensor_root.replace("sensor_blobs", "rendered_sensor_blobs")
     data['rendered_sensor_root'] = rendered_sensor_root
     if not os.path.exists(rendered_sensor_root):
         os.makedirs(rendered_sensor_root)
