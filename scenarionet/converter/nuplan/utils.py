@@ -687,8 +687,19 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
 
         roadblock_ids = scenario.get_route_roadblock_ids()
         driving_commands = []
+        ego_dynamics = []
         for i in range(0,scenario.get_number_of_iterations(),5):
-            ego_pose = scenario.get_ego_state_at_iteration(i).rear_axle
+            ego_state = scenario.get_ego_state_at_iteration(i)
+            ego_ax = ego_state.dynamic_car_state.rear_axle_acceleration_2d.x
+            ego_ay = ego_state.dynamic_car_state.rear_axle_acceleration_2d.y
+            ego_vx = ego_state.dynamic_car_state.rear_axle_velocity_2d.x
+            ego_vy = ego_state.dynamic_car_state.rear_axle_velocity_2d.y
+            all_dynamics = {
+                "acceleration": np.array([ego_ax, ego_ay]),
+                "velocity": np.array([ego_vx, ego_vy])
+            }
+            ego_dynamics.append(all_dynamics)
+            ego_pose = ego_state.rear_axle
             driving_command = get_driving_command(ego_pose, scenario.map_api, roadblock_ids)
             driving_commands.append(driving_command)
             token = lidar_token[i]
@@ -715,6 +726,7 @@ def convert_nuplan_scenario(scenario: NuPlanScenario, version,collect_sensors=Fa
 
         result['real_camera'] = camera_data
         result['driving_command'] = driving_commands
+        result['ego_dynamics'] = ego_dynamics
 
     return result
 
